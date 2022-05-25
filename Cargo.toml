@@ -1,0 +1,27 @@
+[package]
+name = "gmail_forwarder"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies.imap]
+version = "3.0.0-alpha.7"
+features = ["rustls-tls"]
+default-features = false
+
+[dependencies.lettre]
+version = "0.10.0-rc.6"
+default-features = false
+features = ["smtp-transport", "builder", "rustls-tls"]
+
+[dependencies.imap-proto]
+version = "0.16.1"
+
+[dependencies.clap]
+version = "3.1.18"
+features = ["derive"]
+
+[dependencies.rustls-connector]
+version = "0.16.1"
+
+[dependencies.regex]
+version = "1"
