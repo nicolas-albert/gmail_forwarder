@@ -14,6 +14,7 @@ use std::net::TcpStream;
 
 pub struct App {
     args: Args,
+    connected: bool,
     exists: u32,
     host_imap: String,
     host_smtp: String,
@@ -42,6 +43,7 @@ impl App {
     pub fn parse() -> App {
         let args = cli::parse();
         App {
+            connected: false,
             exists: 0,
             host_imap: String::from("imap.gmail.com"),
             host_smtp: String::from("smtp.gmail.com"),
@@ -66,66 +68,85 @@ impl App {
     }
 
     pub fn run(&mut self) -> Result<(), Box<dyn Error>> {
-        let client = imap::ClientBuilder::new(&self.host_imap, self.port).rustls()?;
-        self.session = Some(
-            client
-                .login(&self.username, &self.password)
-                .map_err(|e| e.0)?,
-        );
-        let mailbox = self.session()?.select("INBOX")?;
-        self.exists = mailbox.exists;
         loop {
+            if !self.connected {
+                let client = imap::ClientBuilder::new(&self.host_imap, self.port).rustls()?;
+                self.session = Some(
+                    client
+                        .login(&self.username, &self.password)
+                        .map_err(|e| e.0)?,
+                );
+                let mailbox = self.session()?.select("INBOX")?;
+                self.exists = mailbox.exists;
+                self.connected = true;
+            }
             if let Err(e) = self.watch_and_forward() {
+                self.connected = false;
                 println!("Error: {}", e);
+            }
+            if !self.connected {
+                if let Ok(session) = self.session() {
+                    let _ = session.close();
+                }
             }
         }
     }
 
     fn watch_and_forward(&mut self) -> Result<(), Box<dyn Error>> {
-        let mut exists = self.exists;
+        let mut exists = Some(self.exists);
+        let mut bye = false;
         if let Ok(MailboxChanged) = self.session()?.idle().wait_while(|response| {
             println!("IDLE response #{}: {:?}", 1, response);
             if let UnsolicitedResponse::Exists(id) = response {
-                let last_exists = exists;
-                exists = id;
+                let last_exists = exists.unwrap();
+                exists = Some(id);
                 if id > last_exists {
                     return false;
                 }
+            } else if let UnsolicitedResponse::Bye { .. } = response {
+                // Bye { code: None, information: Some("Session expired, please login again.") }
+                bye = true;
+                exists = None;
+                return false;
             }
             true
         }) {
         } else {
-            return Ok(());
+            exists = None;
         }
 
-        let messages = self
-            .session()?
-            .fetch(exists.to_string(), "(BODY[HEADER] BODY[TEXT])")?;
-        if let Some(m) = messages.iter().next() {
-            let headers = m.header().ok_or("no header")?;
-            let headers = std::str::from_utf8(headers).expect("message was not valid utf-8");
-            let headers: std::collections::HashMap<&str, &str> = headers
-                .lines()
-                .map(|l| match l.splitn(2, ":").collect::<Vec<&str>>()[..] {
-                    [a, b, ..] => (a, b.trim()),
-                    _ => (l, ""),
-                })
-                .collect();
+        self.connected = !bye;
 
-            if let Some(re) = &self.re_subject {
-                if !re.is_match(headers["Subject"]) {
-                    println!("Subject not match: {}", headers["Subject"]);
-                    return Ok(());
+        if let Some(exists) = exists {
+            let messages = self
+                .session()?
+                .fetch(exists.to_string(), "(BODY[HEADER] BODY[TEXT])")?;
+            if let Some(m) = messages.iter().next() {
+                let headers = m.header().ok_or("no header")?;
+                let headers = std::str::from_utf8(headers).expect("message was not valid utf-8");
+                let headers: std::collections::HashMap<&str, &str> = headers
+                    .lines()
+                    .map(|l| match l.splitn(2, ":").collect::<Vec<&str>>()[..] {
+                        [a, b, ..] => (a, b.trim()),
+                        _ => (l, ""),
+                    })
+                    .collect();
+
+                if let Some(re) = &self.re_subject {
+                    if !re.is_match(headers["Subject"]) {
+                        println!("Subject not match: {}", headers["Subject"]);
+                        return Ok(());
+                    }
                 }
-            }
-            if let Some(re) = &self.re_sender {
-                if !re.is_match(headers["From"]) {
-                    println!("Sender not match: {}", headers["From"]);
-                    return Ok(());
+                if let Some(re) = &self.re_sender {
+                    if !re.is_match(headers["From"]) {
+                        println!("Sender not match: {}", headers["From"]);
+                        return Ok(());
+                    }
                 }
-            }
-            if let Some(text) = m.text() {
-                self.send_email(&headers, text)?;
+                if let Some(text) = m.text() {
+                    self.send_email(&headers, text)?;
+                }
             }
         }
         Ok(())
