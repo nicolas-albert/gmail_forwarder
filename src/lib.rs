@@ -7,10 +7,12 @@ use imap::Session;
 use lettre::message::header::*;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
+use log::{error, info};
 use regex::Regex;
 use rustls_connector::TlsStream;
 use std::error::Error;
 use std::net::TcpStream;
+use std::time::Duration;
 
 pub struct App {
     args: Args,
@@ -82,7 +84,7 @@ impl App {
             }
             if let Err(e) = self.watch_and_forward() {
                 self.connected = false;
-                println!("Error: {}", e);
+                error!("Error: {}", e);
             }
             if !self.connected {
                 if let Ok(session) = self.session() {
@@ -95,22 +97,26 @@ impl App {
     fn watch_and_forward(&mut self) -> Result<(), Box<dyn Error>> {
         let mut exists = Some(self.exists);
         let mut bye = false;
-        if let Ok(MailboxChanged) = self.session()?.idle().wait_while(|response| {
-            println!("IDLE response #{}: {:?}", 1, response);
-            if let UnsolicitedResponse::Exists(id) = response {
-                let last_exists = exists.unwrap();
-                exists = Some(id);
-                if id > last_exists {
+        if let Ok(MailboxChanged) = self
+            .session()?
+            .idle()
+            .timeout(Duration::from_secs(60 * 15))
+            .wait_while(|response| {
+                info!("IDLE response #{}: {:?}", 1, response);
+                if let UnsolicitedResponse::Exists(id) = response {
+                    let last_exists = exists.unwrap();
+                    exists = Some(id);
+                    if id > last_exists {
+                        return false;
+                    }
+                } else if let UnsolicitedResponse::Bye { .. } = response {
+                    bye = true;
+                    exists = None;
                     return false;
                 }
-            } else if let UnsolicitedResponse::Bye { .. } = response {
-                // Bye { code: None, information: Some("Session expired, please login again.") }
-                bye = true;
-                exists = None;
-                return false;
-            }
-            true
-        }) {
+                true
+            })
+        {
         } else {
             exists = None;
         }
@@ -134,13 +140,13 @@ impl App {
 
                 if let Some(re) = &self.re_subject {
                     if !re.is_match(headers["Subject"]) {
-                        println!("Subject not match: {}", headers["Subject"]);
+                        info!("Subject not match: {}", headers["Subject"]);
                         return Ok(());
                     }
                 }
                 if let Some(re) = &self.re_sender {
                     if !re.is_match(headers["From"]) {
-                        println!("Sender not match: {}", headers["From"]);
+                        info!("Sender not match: {}", headers["From"]);
                         return Ok(());
                     }
                 }
@@ -169,7 +175,7 @@ impl App {
                 .header(ContentType::parse(headers["Content-Type"])?)
                 .body(String::from_utf8(body.to_vec())?)?;
             match mailer.send(&email) {
-                Ok(_) => println!("Email sent successfully to {}!", to),
+                Ok(_) => info!("Email sent successfully to {}!", to),
                 Err(e) => panic!("Could not send email: {:?}", e),
             }
         }
