@@ -70,6 +70,7 @@ impl App {
     }
 
     pub fn run(&mut self) -> Result<(), Box<dyn Error>> {
+        info!("Starting the run loop");
         loop {
             if !self.connected {
                 let client = imap::ClientBuilder::new(&self.host_imap, self.port).rustls()?;
@@ -100,9 +101,9 @@ impl App {
         if let Ok(MailboxChanged) = self
             .session()?
             .idle()
-            .timeout(Duration::from_secs(60 * 15))
+            .timeout(Duration::from_secs(60 * 10))
             .wait_while(|response| {
-                info!("IDLE response #{}: {:?}", 1, response);
+                info!("IDLE response: {:?}", response);
                 if let UnsolicitedResponse::Exists(id) = response {
                     let last_exists = exists.unwrap();
                     exists = Some(id);
@@ -118,6 +119,8 @@ impl App {
             })
         {
         } else {
+            info!("Wait not OK, do bye");
+            bye = true;
             exists = None;
         }
 
