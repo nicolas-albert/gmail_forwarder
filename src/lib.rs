@@ -171,12 +171,18 @@ impl App {
             .credentials(creds)
             .build();
         for to in self.to.split(',') {
+            let body = lettre::message::Body::new_with_encoding(
+                body.to_vec(),
+                lettre::message::header::ContentTransferEncoding::Binary,
+            )
+            .ok()
+            .ok_or("failed to encode body")?;
             let email = Message::builder()
                 .from(headers["From"].parse()?)
                 .to(to.parse()?)
                 .subject(headers["Subject"])
                 .header(ContentType::parse(headers["Content-Type"])?)
-                .body(String::from_utf8(body.to_vec())?)?;
+                .body(body)?;
             match mailer.send(&email) {
                 Ok(_) => info!("Email sent successfully to {}!", to),
                 Err(e) => panic!("Could not send email: {:?}", e),
