@@ -9,6 +9,8 @@ use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use log::{error, info};
 use regex::Regex;
+use retry::delay::Fixed;
+use retry::retry;
 use rustls_connector::TlsStream;
 use std::error::Error;
 use std::net::TcpStream;
@@ -183,9 +185,10 @@ impl App {
                 .subject(headers["Subject"])
                 .header(ContentType::parse(headers["Content-Type"])?)
                 .body(body)?;
-            match mailer.send(&email) {
+            let result = retry(Fixed::from_millis(30000).take(20), || mailer.send(&email));
+            match result {
                 Ok(_) => info!("Email sent successfully to {}!", to),
-                Err(e) => panic!("Could not send email: {:?}", e),
+                Err(e) => error!("Could not send email: {:?}", e),
             }
         }
         Ok(())

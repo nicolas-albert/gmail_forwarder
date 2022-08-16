@@ -1,6 +1,6 @@
 [package]
 name = "gmail_forwarder"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 
 [dependencies.imap]
@@ -31,3 +31,6 @@ version = "0"
 
 [dependencies.simple_logger]
 version = "2"
+
+[dependencies.retry]
+version = "1"
