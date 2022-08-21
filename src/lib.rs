@@ -71,19 +71,26 @@ impl App {
         }
     }
 
+    fn connect(&mut self) -> Result<(), Box<dyn Error>> {
+        let client = imap::ClientBuilder::new(&self.host_imap, self.port).rustls()?;
+        self.session = Some(
+            client
+                .login(&self.username, &self.password)
+                .map_err(|e| e.0)?,
+        );
+        let mailbox = self.session()?.select("INBOX")?;
+        self.exists = mailbox.exists;
+        self.connected = true;
+        Ok(())
+    }
+
     pub fn run(&mut self) -> Result<(), Box<dyn Error>> {
         info!("Starting the run loop");
         loop {
-            if !self.connected {
-                let client = imap::ClientBuilder::new(&self.host_imap, self.port).rustls()?;
-                self.session = Some(
-                    client
-                        .login(&self.username, &self.password)
-                        .map_err(|e| e.0)?,
-                );
-                let mailbox = self.session()?.select("INBOX")?;
-                self.exists = mailbox.exists;
-                self.connected = true;
+            let result = retry(Fixed::from_millis(30000).take(20), || self.connect());
+            match result {
+                Ok(_) => info!("Connected to IMAP!"),
+                Err(e) => error!("Failed to connect IMAP: {:?}", e),
             }
             if let Err(e) = self.watch_and_forward() {
                 self.connected = false;
