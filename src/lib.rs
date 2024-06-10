@@ -3,7 +3,7 @@ mod cli;
 use cli::Args;
 use imap::extensions::idle::WaitOutcome::MailboxChanged;
 use imap::types::UnsolicitedResponse;
-use imap::Session;
+use imap::{ImapConnection, Session};
 use lettre::message::header::*;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
@@ -11,9 +11,7 @@ use log::{error, info};
 use regex::Regex;
 use retry::delay::Fixed;
 use retry::retry;
-use rustls_connector::TlsStream;
 use std::error::Error;
-use std::net::TcpStream;
 use std::time::Duration;
 
 pub struct App {
@@ -23,7 +21,7 @@ pub struct App {
     host_imap: String,
     host_smtp: String,
     port: u16,
-    session: Option<Session<TlsStream<TcpStream>>>,
+    session: Option<Session<Box<dyn ImapConnection>>>,
     re_sender: Option<Regex>,
     re_subject: Option<Regex>,
 }
@@ -36,7 +34,7 @@ impl std::ops::Deref for App {
 }
 
 impl App {
-    fn session(&mut self) -> Result<&mut Session<TlsStream<TcpStream>>, String> {
+    fn session(&mut self) -> Result<&mut Session<Box<dyn ImapConnection>>, String> {
         if let Some(session) = &mut self.session {
             Ok(session)
         } else {
@@ -72,7 +70,7 @@ impl App {
     }
 
     fn connect(&mut self) -> Result<(), Box<dyn Error>> {
-        let client = imap::ClientBuilder::new(&self.host_imap, self.port).rustls()?;
+        let client = imap::ClientBuilder::new(&self.host_imap, self.port).connect()?;
         self.session = Some(
             client
                 .login(&self.username, &self.password)
