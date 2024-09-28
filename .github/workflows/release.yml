@@ -1,0 +1,178 @@
+name: Release Binaries
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            file_suffix: windows_amd64
+            file_extension: .exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            file_suffix: macos_amd64
+            file_extension: ""
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            file_suffix: macos_aarch64
+            file_extension: ""
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            file_suffix: linux_amd64
+            file_extension: ""
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            file_suffix: linux_musl_amd64
+            file_extension: ""
+          - os: ubuntu-latest
+            target: armv7-unknown-linux-gnueabihf
+            file_suffix: linux_armv7
+            file_extension: ""
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            file_suffix: linux_aarch64
+            file_extension: ""
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache cargo index
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-index-
+
+      - name: Cache target directory
+        uses: actions/cache@v3
+        with:
+          path: |
+            target
+            !target/**/release
+          key: ${{ runner.os }}-target-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-target-${{ matrix.target }}-
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+          override: true
+
+      - name: Install dependencies for musl (if needed)
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Install dependencies for aarch64-unknown-linux-gnu
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Install dependencies for armv7-unknown-linux-gnueabihf
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'armv7-unknown-linux-gnueabihf'
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-linux-gnueabihf
+
+      - name: Install cross for Linux targets
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo install cross
+
+      - name: Build project using cross for Linux
+        if: matrix.os == 'ubuntu-latest'
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Build project for Windows
+        if: matrix.os == 'windows-latest'
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build project for macOS
+        if: matrix.os == 'macos-latest'
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename binary Windows
+        if: matrix.os == 'windows-latest'
+        run: mv -Force target/${{ matrix.target }}/release/gmail_forwarder${{ matrix.file_extension }} target/${{ matrix.target }}/release/gmail_forwarder_${{ matrix.file_suffix }}${{ matrix.file_extension }}
+
+      - name: Rename binary
+        if: matrix.os != 'windows-latest'
+        run: mv target/${{ matrix.target }}/release/gmail_forwarder${{ matrix.file_extension }} target/${{ matrix.target }}/release/gmail_forwarder_${{ matrix.file_suffix }}${{ matrix.file_extension }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: gmail_forwarder_${{ matrix.file_suffix }}
+          path: target/${{ matrix.target }}/release/gmail_forwarder_${{ matrix.file_suffix }}${{ matrix.file_extension }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Windows binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gmail_forwarder_windows_amd64
+
+      - name: Download Linux GNU binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gmail_forwarder_linux_amd64
+
+      - name: Download Linux Musl binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gmail_forwarder_linux_musl_amd64
+
+      - name: Download macOS AMD64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gmail_forwarder_macos_amd64
+
+      - name: Download macOS AArch64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gmail_forwarder_macos_aarch64
+
+      - name: Download Linux Armv7 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gmail_forwarder_linux_armv7
+
+      - name: Download Linux AArch64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gmail_forwarder_linux_aarch64
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            gmail_forwarder_windows_amd64.exe
+            gmail_forwarder_linux_amd64
+            gmail_forwarder_linux_musl_amd64
+            gmail_forwarder_macos_amd64
+            gmail_forwarder_macos_aarch64
+            gmail_forwarder_linux_armv7
+            gmail_forwarder_linux_aarch64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
